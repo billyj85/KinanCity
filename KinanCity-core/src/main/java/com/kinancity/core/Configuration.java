@@ -16,9 +16,11 @@ import org.slf4j.LoggerFactory;
 
 import com.kinancity.api.PtcSession;
 import com.kinancity.api.errors.TechnicalException;
+import com.kinancity.captcha.client.ClientProvider;
 import com.kinancity.core.captcha.CaptchaException;
 import com.kinancity.core.captcha.CaptchaProvider;
 import com.kinancity.core.captcha.CaptchaQueue;
+import com.kinancity.core.captcha.antiCaptcha.AntiCaptchaProvider;
 import com.kinancity.core.captcha.imageTypers.ImageTypersProvider;
 import com.kinancity.core.captcha.impl.LogCaptchaCollector;
 import com.kinancity.core.captcha.twoCaptcha.TwoCaptchaProvider;
@@ -106,47 +108,52 @@ public class Configuration {
 
 					captchaQueue = new CaptchaQueue(new LogCaptchaCollector());
 
-					if (captchaKey != null && !captchaKey.isEmpty()) {
-						try {
-
-							CaptchaProvider provider = null;
-							String providerThreadName = "";
-
-							if ("2captcha".equals(captchaProvider)) {
-
-								// Add 2 captcha Provider
-								provider = TwoCaptchaProvider.getInstance(captchaQueue, captchaKey);
-								providerThreadName = "2captcha";
-
-							} else if ("imageTypers".equals(captchaProvider)) {
-								// Add imageTypers Provider
-								provider = ImageTypersProvider.getInstance(captchaQueue, captchaKey);
-								providerThreadName = "imageTypers";
-							} else {
-								throw new ConfigurationException("Unknown captcha provider " + captchaProvider);
-							}
-
-							// Proceed running captcha thread
-
-							provider.setMaxWait(captchaMaxTotalTime);
-							provider.setMaxParallelChallenges(captchaMaxParallelChallenges);
-
-							double balance = provider.getBalance();
-							if (balance < 0) {
-								logger.warn("WARNING !! : Current captcha balance is negative {}", balance);
-							} else {
-								logger.info("Catpcha Key is valid. Current captcha balance is {}", balance);
-							}
-
-							Thread captchaThread = new Thread(provider);
-							captchaThread.setName(providerThreadName);
-							captchaThread.start();
-
-						} catch (CaptchaException e) {
-							throw new ConfigurationException(e);
-						}
-					} else {
+					if ((captchaKey == null || captchaKey.isEmpty()) && !"local".equals(captchaProvider)) {
 						throw new ConfigurationException("No Catpcha key given");
+					}
+					
+					try {
+						CaptchaProvider provider = null;
+						String providerThreadName = "";
+
+						if ("2captcha".equals(captchaProvider)) {
+						// Add 2 captcha Provider
+							provider = TwoCaptchaProvider.getInstance(captchaQueue, captchaKey);
+							providerThreadName = "2captcha";
+						} else if ("imageTypers".equals(captchaProvider)) {
+							// Add imageTypers Provider
+							provider = ImageTypersProvider.getInstance(captchaQueue, captchaKey);
+							providerThreadName = "imageTypers";
+						} else if ("antiCaptcha".equals(captchaProvider)) {
+							// Add imageTypers Provider
+							provider = AntiCaptchaProvider.getInstance(captchaQueue, captchaKey);
+							providerThreadName = "antiCaptcha";
+						} else if ("local".equals(captchaProvider)) {
+							// Add local server provider
+							provider = ClientProvider.getInstance(captchaQueue);
+							providerThreadName = "localCaptchaServer";
+						} else {
+							throw new ConfigurationException("Unknown captcha provider " + captchaProvider);
+						}
+
+						// Proceed running captcha thread
+
+						provider.setMaxWait(captchaMaxTotalTime);
+						provider.setMaxParallelChallenges(captchaMaxParallelChallenges);
+
+						double balance = provider.getBalance();
+						if (balance < 0) {
+							logger.warn("WARNING !! : Current captcha balance is negative {}", balance);
+						} else {
+							logger.info("Catpcha Key is valid. Current captcha balance is {}", balance);
+						}
+
+						Thread captchaThread = new Thread(provider);
+						captchaThread.setName(providerThreadName);
+						captchaThread.start();
+
+					} catch (CaptchaException e) {
+						throw new ConfigurationException(e);
 					}
 
 				} catch (TechnicalException e) {

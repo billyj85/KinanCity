@@ -1,6 +1,7 @@
 package com.kinancity.core.captcha.imageTypers;
 
 import java.io.IOException;
+import java.net.SocketTimeoutException;
 import java.time.LocalDateTime;
 import java.time.temporal.ChronoUnit;
 import java.util.ArrayList;
@@ -130,8 +131,12 @@ public class ImageTypersProvider extends CaptchaProvider {
 							} else if (body.contains("IMAGE_TIMED_OUT")) {
 								logger.warn("ImageTypers IMAGE_TIMED_OUT. Try again");
 								challenges.remove(challenge);
+							} else if (body.contains("INVALID_CAPTCHA_ID")) {
+								logger.error("ImageTypers reported captcha ID as invdalid : " + captchaId);
+								challenges.remove(challenge);
 							} else {
-								logger.error("Unknown I0mageTypers Error : " + body);
+								logger.error("Unknown ImageTypers Error : " + body);
+								challenges.remove(challenge);
 							}
 						} else {
 							String response = body;
@@ -141,6 +146,8 @@ public class ImageTypersProvider extends CaptchaProvider {
 						}
 					} catch (IOException e) {
 						logger.error("ImageTypers Error : " + e.getMessage(), e);
+						logger.debug("ImageTypers Error details", e);
+						challenges.remove(challenge);
 					}
 				}
 			}
@@ -163,23 +170,25 @@ public class ImageTypersProvider extends CaptchaProvider {
 				Request sendRequest = buildSendCaptchaRequest();
 				for (int i = 0; i < nbToRequest; i++) {
 					try (Response sendResponse = captchaClient.newCall(sendRequest).execute()) {
-						String captchaId = sendResponse.body().string();
-						logger.info("Requested new Captcha, id : {}", captchaId);
-						challenges.add(new ImageTypersRequest(captchaId));
+						String body = sendResponse.body().string();
+
+						if (body.contains("ERROR")) {
+							if (body.contains("INSUFFICIENT_BALANCE")) {
+								if (manageInsufficientBalanceStop()) {
+									break;
+								}
+							} else {
+								logger.error("Error while calling IN ImageTypers : {}", body);
+							}
+						} else {
+							String captchaId = body;
+							logger.info("Requested new Captcha, id : {}", captchaId);
+							challenges.add(new ImageTypersRequest(captchaId));
+						}
 					} catch (Exception e) {
 						if (INSUFFICIENT_BALANCE.equals(e.getMessage())) {
-							logger.error("Insufficient balance");
-							if (stopOnInsufficientBalance) {
-								logger.error("STOP");
-								this.runFlag = false;
+							if (manageInsufficientBalanceStop()) {
 								break;
-							} else {
-								logger.error("WAIT");
-								try {
-									Thread.sleep(30000);
-								} catch (InterruptedException e1) {
-									// Interrupted
-								}
 							}
 						} else {
 							logger.error("Error while calling IN ImageTypers : {}", e.getMessage());
@@ -198,6 +207,28 @@ public class ImageTypersProvider extends CaptchaProvider {
 	}
 
 	/**
+	 * Manage insufficient Balance
+	 * 
+	 * @return true if loop should stop
+	 */
+	private boolean manageInsufficientBalanceStop() {
+		logger.error("Insufficient balance");
+		if (stopOnInsufficientBalance) {
+			logger.error("STOP");
+			this.runFlag = false;
+			return true;
+		} else {
+			logger.error("WAIT");
+			try {
+				Thread.sleep(30000);
+			} catch (InterruptedException e1) {
+				// Interrupted
+			}
+		}
+		return false;
+	}
+
+	/**
 	 * Get Current Balance. Should be called at least once before use to check for valid key.
 	 * 
 	 * @return current balance in USD
@@ -207,9 +238,18 @@ public class ImageTypersProvider extends CaptchaProvider {
 		try {
 			Request sendRequest = buildBalanceCheckequestGet();
 			Response sendResponse = captchaClient.newCall(sendRequest).execute();
-			String balance = sendResponse.body().string();
-			return Double.valueOf(balance.replaceAll("\\$", ""));
-		} catch (Exception e) {
+
+			String body = sendResponse.body().string();
+			if (body.contains("ERROR")) {
+				if (body.contains("AUTHENTICATION_FAILED")) {
+					throw new ImageTypersConfigurationException("Authentication failed, captcha key might be bad");
+				} else {
+					throw new ImageTypersConfigurationException(body);
+				}
+			}
+
+			return Double.valueOf(body.replaceAll("\\$", ""));
+		} catch (IOException e) {
 			throw new ImageTypersConfigurationException("Error getting account balance", e);
 		}
 	}
